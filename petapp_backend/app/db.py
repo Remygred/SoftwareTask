@@ -1,4 +1,3 @@
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
@@ -12,16 +11,10 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_ar
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-from contextlib import contextmanager
-
-@contextmanager
+# ✅ FastAPI 推荐的依赖写法：yield 一个会话，自动关闭
 def get_db():
     db = SessionLocal()
     try:
         yield db
-        db.commit()
-    except:
-        db.rollback()
-        raise
     finally:
         db.close()
