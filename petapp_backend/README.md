@@ -5,7 +5,8 @@
 ```bash
 python -m venv venv && source venv/bin/activate  # Windows 用 venv\Scripts\activate
 pip install -r requirements.txt
-
+# 初始化数据库（生成 petapp.db 并建表）
+python -m app.init_db
 # 修改 .env 中 DATABASE_URL（默认 sqlite）
 uvicorn app.main:app --reload --port 8000
 # 健康检查
