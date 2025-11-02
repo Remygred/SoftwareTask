@@ -1,0 +1,13 @@
+PyQt5==5.15.9
+fastapi==0.115.0
+uvicorn==0.30.6
+sqlalchemy==2.0.36
+pydantic==2.8.2
+python-dotenv==1.0.1
+passlib[bcrypt]==1.7.4
+pyjwt==2.9.0
+email-validator
+pyinstaller==6.10.0
+requests==2.31.0
+bcrypt==3.2.0
+cryptography==42.0.5
