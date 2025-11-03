@@ -32,6 +32,8 @@ class MainWindow(QStackedWidget):
         self.register_window = RegisterWindow(self)  
         self.reset_password_window = ResetPasswordWindow(self)
         self.pet_detail_window = None  # 动态创建，避免重复添加
+        self.meal_plan_window = None
+
         
         # 添加到堆栈
         self.addWidget(self.login_window)
@@ -62,6 +64,23 @@ class MainWindow(QStackedWidget):
         self.addWidget(self.pet_detail_window)
         self.setCurrentIndex(self.count() - 1)
     
+    def show_meal_plan(self, pet_data):
+        """显示食谱计划界面"""
+        # 移除旧的详情窗口（如果存在）
+        if self.meal_plan_window:
+            self.removeWidget(self.meal_plan_window)
+            self.meal_plan_window.deleteLater()
+    
+        # 创建新的详情窗口
+        from app.ui.meal_plan import MealPlanWindow
+        self.meal_plan_window = MealPlanWindow(
+            self, 
+            pet_data['id'], 
+            pet_data['name'],
+            pet_data['species']
+        )
+        self.addWidget(self.meal_plan_window)
+        self.setCurrentIndex(self.count() - 1)
     def show_add_pet(self):
         """显示添加宠物界面"""
         self.show_pet_detail()  # 无参数表示新建宠物
@@ -74,6 +93,8 @@ class MainWindow(QStackedWidget):
     def show_reset_password(self):
         """显示重置密码界面"""
         self.setCurrentWidget(self.reset_password_window)
+
+    
 
 def get_database_url():
     """从环境变量获取数据库连接URL"""

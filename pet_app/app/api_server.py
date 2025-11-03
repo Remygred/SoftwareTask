@@ -2,7 +2,7 @@ import threading
 import uvicorn
 from fastapi import FastAPI, HTTPException, Depends, Security, Form
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import create_engine, Column, Integer, String, Text, Date, DateTime, ForeignKey, func
+from sqlalchemy import create_engine, Column, Integer, String, Text, Date, DateTime, ForeignKey, func,Boolean
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from passlib.hash import bcrypt as bcrypt_hash
 from pydantic import BaseModel
@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 数据库配置
-DB_HOST = os.getenv("DB_HOST", "rm-bp19kz85ye935j549.mysql.rds.aliyuncs.com")
+DB_HOST = os.getenv("DB_HOST", "rm-bp19kz85ye935j549po.mysql.rds.aliyuncs.com")
 DB_PORT = os.getenv("DB_PORT", "3306")
 DB_USER = os.getenv("DB_USER", "petapp_user")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "Lsm050401")
@@ -161,6 +161,40 @@ class PetCreate(BaseModel):
     sex: str = None
     birth_date: str = None
     weight_kg: str = None
+
+class MealPlan(Base):
+    __tablename__ = "meal_plans"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pet_id = Column(Integer, ForeignKey("pets.id"), nullable=False)
+    breakfast = Column(Text)
+    lunch = Column(Text)
+    dinner = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+class MealPlanCreate(BaseModel):
+    breakfast: str = None
+    lunch: str = None
+    dinner: str = None
+
+class MealPlanResponse(BaseModel):
+    id: int
+    pet_id: int
+    breakfast: str = None
+    lunch: str = None
+    dinner: str = None
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+
+class FeedingRecord(Base):
+    __tablename__ = "feeding_records"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pet_id = Column(Integer, ForeignKey("pets.id"), nullable=False)
+    date = Column(Date, default=datetime.date.today, nullable=False)
+    breakfast_done = Column(Boolean, default=False)
+    lunch_done = Column(Boolean, default=False)
+    dinner_done = Column(Boolean, default=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 # 初始化数据库
 def init_db():
@@ -519,40 +553,247 @@ def delete_pet(
 ):
     print(f"尝试删除宠物: pet_id={pet_id}, user_id={current_user.id}")
     
-    # 先检查所有宠物
-    all_pets = db.query(Pet).all()
-    
-    # 检查目标宠物
-    target_pet = db.query(Pet).filter(Pet.id == pet_id).first()
-    if target_pet:
-        print(f"找到目标宠物: owner_id={target_pet.owner_id}")
-    else:
-        print("未找到目标宠物")
-    
-    # 检查查询条件
-    db_pet = db.query(Pet).filter(Pet.id == pet_id, Pet.owner_id == current_user.id).first()
-    if not db_pet:
-        print("查询条件不匹配")
-        # 尝试仅通过ID查询
-        by_id = db.query(Pet).filter(Pet.id == pet_id).first()
-        if by_id:
-            print(f"通过ID找到宠物，但owner_id不匹配: {by_id.owner_id} != {current_user.id}")
-        else:
-            print("完全找不到该ID的宠物")
+    # 先检查宠物是否属于当前用户
+    pet = db.query(Pet).filter(Pet.id == pet_id, Pet.owner_id == current_user.id).first()
+    if not pet:
+        print("未找到该用户拥有的宠物")
         raise HTTPException(404, "宠物不存在或无权访问")
     
-    db.delete(db_pet)
+    # 先删除相关的喂食记录
+    db.query(FeedingRecord).filter(FeedingRecord.pet_id == pet_id).delete()
+    
+    # 先删除相关的食谱计划
+    db.query(MealPlan).filter(MealPlan.pet_id == pet_id).delete()
+    db.delete(pet)
     db.commit()
     return {"message": "宠物删除成功"}
+@app.get("/api/pets/{pet_id}/meal-plan")
+def get_meal_plan(pet_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """获取宠物的食谱计划"""
+    # 先检查宠物是否属于当前用户
+    pet = db.query(Pet).filter(Pet.id == pet_id, Pet.owner_id == current_user.id).first()
+    if not pet:
+        raise HTTPException(404, "宠物不存在或无权访问")
+    
+    # 获取食谱计划
+    meal_plan = db.query(MealPlan).filter(MealPlan.pet_id == pet_id).first()
+    if not meal_plan:
+        # 如果没有食谱计划，创建一个空的
+        meal_plan = MealPlan(
+            pet_id=pet_id,
+            breakfast="",
+            lunch="",
+            dinner=""
+        )
+        db.add(meal_plan)
+        db.commit()
+        db.refresh(meal_plan)
+    
+    return {
+        "id": meal_plan.id,
+        "pet_id": meal_plan.pet_id,
+        "breakfast": meal_plan.breakfast,
+        "lunch": meal_plan.lunch,
+        "dinner": meal_plan.dinner,
+        "created_at": meal_plan.created_at.isoformat(),
+        "updated_at": meal_plan.updated_at.isoformat()
+    }
+
+@app.post("/api/pets/{pet_id}/meal-plan")
+def update_meal_plan(
+    pet_id: int,
+    meal_plan: MealPlanCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """创建或更新宠物的食谱计划"""
+    # 先检查宠物是否属于当前用户
+    pet = db.query(Pet).filter(Pet.id == pet_id, Pet.owner_id == current_user.id).first()
+    if not pet:
+        raise HTTPException(404, "宠物不存在或无权访问")
+    
+    # 获取或创建食谱计划
+    existing_plan = db.query(MealPlan).filter(MealPlan.pet_id == pet_id).first()
+    if existing_plan:
+        # 更新现有计划
+        if meal_plan.breakfast is not None:
+            existing_plan.breakfast = meal_plan.breakfast
+        if meal_plan.lunch is not None:
+            existing_plan.lunch = meal_plan.lunch
+        if meal_plan.dinner is not None:
+            existing_plan.dinner = meal_plan.dinner
+        db.commit()
+        db.refresh(existing_plan)
+        return {"message": "食谱计划已更新", "meal_plan": existing_plan}
+    else:
+        # 创建新计划
+        new_plan = MealPlan(
+            pet_id=pet_id,
+            breakfast=meal_plan.breakfast or "",
+            lunch=meal_plan.lunch or "",
+            dinner=meal_plan.dinner or ""
+        )
+        db.add(new_plan)
+        db.commit()
+        db.refresh(new_plan)
+        return {"message": "食谱计划已创建", "meal_plan": new_plan}
+
+@app.get("/api/pets/{pet_id}/feeding-record")
+def get_feeding_record(pet_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """获取宠物当天的喂食记录"""
+    # 先检查宠物是否属于当前用户
+    pet = db.query(Pet).filter(Pet.id == pet_id, Pet.owner_id == current_user.id).first()
+    if not pet:
+        raise HTTPException(404, "宠物不存在或无权访问")
+    
+    # 获取当天的喂食记录
+    today = datetime.date.today()
+    record = db.query(FeedingRecord).filter(
+        FeedingRecord.pet_id == pet_id,
+        FeedingRecord.date == today
+    ).first()
+    
+    if not record:
+        # 创建新记录
+        record = FeedingRecord(
+            pet_id=pet_id,
+            date=today,
+            breakfast_done=False,
+            lunch_done=False,
+            dinner_done=False
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+    
+    return {
+        "id": record.id,
+        "pet_id": record.pet_id,
+        "date": record.date.isoformat(),
+        "breakfast_done": record.breakfast_done,
+        "lunch_done": record.lunch_done,
+        "dinner_done": record.dinner_done,
+        "updated_at": record.updated_at.isoformat()
+    }
+
+@app.post("/api/pets/{pet_id}/feeding-record")
+def update_feeding_record(
+    pet_id: int,
+    meal_type: str = Form(...),
+    done: bool = Form(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """更新宠物当天的喂食记录"""
+    # 先检查宠物是否属于当前用户
+    pet = db.query(Pet).filter(Pet.id == pet_id, Pet.owner_id == current_user.id).first()
+    if not pet:
+        raise HTTPException(404, "宠物不存在或无权访问")
+    
+    # 获取当天的喂食记录
+    today = datetime.date.today()
+    record = db.query(FeedingRecord).filter(
+        FeedingRecord.pet_id == pet_id,
+        FeedingRecord.date == today
+    ).first()
+    
+    if not record:
+        # 创建新记录
+        record = FeedingRecord(
+            pet_id=pet_id,
+            date=today,
+            breakfast_done=False,
+            lunch_done=False,
+            dinner_done=False
+        )
+        db.add(record)
+    
+    # 更新相应餐次的打卡状态
+    if meal_type == "breakfast":
+        record.breakfast_done = done
+    elif meal_type == "lunch":
+        record.lunch_done = done
+    elif meal_type == "dinner":
+        record.dinner_done = done
+    else:
+        raise HTTPException(400, "无效的餐次类型")
+    
+    db.commit()
+    db.refresh(record)
+    
+    return {
+        "id": record.id,
+        "pet_id": record.pet_id,
+        "date": record.date.isoformat(),
+        "breakfast_done": record.breakfast_done,
+        "lunch_done": record.lunch_done,
+        "dinner_done": record.dinner_done,
+        "updated_at": record.updated_at.isoformat()
+    }
+
+@app.get("/api/meal-plan/recommendations/{species}")
+def get_recommendations(species: str):
+    """获取特定宠物品种的早中晚三餐推荐"""
+    print(f"【API】收到食物推荐请求 - 种类: {species}")
+    
+    # 创建详细的三餐推荐表单
+    recommendations = {
+        "狗": {
+            "breakfast": "推荐早餐：优质狗粮+煮熟的鸡胸肉（100g）+胡萝卜碎（20g）",
+            "lunch": "推荐午餐：西兰花（30g）+牛肉（80g）+狗粮（50g）",
+            "dinner": "推荐晚餐：三文鱼（60g）+南瓜泥（40g）+狗粮（60g）"
+        },
+        "猫": {
+            "breakfast": "推荐早餐：优质猫粮（40g）+煮熟的鱼肉（30g）",
+            "lunch": "推荐午餐：鸡胸肉（50g）+猫草（少量）+罐头（半罐）",
+            "dinner": "推荐晚餐：猫粮（40g）+煮虾（2只）+营养膏（1cm）"
+        },
+        "兔子": {
+            "breakfast": "推荐早餐：干草（不限量）+胡萝卜（20g）",
+            "lunch": "推荐午餐：新鲜生菜（30g）+兔粮（15g）",
+            "dinner": "推荐晚餐：干草（不限量）+苹果片（2片）"
+        },
+        "仓鼠": {
+            "breakfast": "推荐早餐：仓鼠粮（10g）+葵花籽（3粒）",
+            "lunch": "推荐午餐：胡萝卜丁（10g）+苹果（5g）",
+            "dinner": "推荐晚餐：仓鼠粮（10g）+面包虫（1只）"
+        },
+        "鸟": {
+            "breakfast": "推荐早餐：鸟粮（15g）+苹果块（10g）",
+            "lunch": "推荐午餐：青菜（10g）+小米（5g）",
+            "dinner": "推荐晚餐：鸟粮（15g）+葡萄干（2粒）"
+        },
+        "默认": {
+            "breakfast": "推荐早餐：优质主粮+适量蛋白质来源",
+            "lunch": "推荐午餐：蔬菜+主粮+少量水果",
+            "dinner": "推荐晚餐：营养均衡的主食+少量零食"
+        }
+    }
+    
+    # 获取推荐，如果找不到特定种类，使用默认推荐
+    species_recommendation = recommendations.get(species, recommendations["默认"])
+    
+    print(f"【API】返回推荐 - 早餐: {species_recommendation['breakfast']}")
+    print(f"【API】返回推荐 - 午餐: {species_recommendation['lunch']}")
+    print(f"【API】返回推荐 - 晚餐: {species_recommendation['dinner']}")
+    
+    return {
+        "breakfast": species_recommendation["breakfast"],
+        "lunch": species_recommendation["lunch"],
+        "dinner": species_recommendation["dinner"]
+    }
 # 健康建议路由
 @app.get("/api/health/advice/{species}")
 def get_health_advice(species: str):
     advice = {
-        "dog": "每日运动1小时，定期驱虫，注意牙齿清洁",
-        "cat": "提供猫抓板，定期梳理毛发，注意饮食均衡",
-        "rabbit": "提供充足干草，注意牙齿生长，避免潮湿环境"
+        "狗": "每日运动1小时，定期驱虫，注意牙齿清洁",
+        "猫": "提供猫抓板，定期梳理毛发，注意饮食均衡",
+        "兔子": "提供充足干草，注意牙齿生长，避免潮湿环境",
+        "仓鼠": "提供跑轮和磨牙石，注意饮食均衡，避免过度肥胖",
+        "鸟": "提供足够的活动空间，注意羽毛清洁，定期检查喙部"
     }
-    return {"advice": advice.get(species.lower(), "暂无该宠物的健康建议")}
+    return {"advice": advice.get(species, "暂无该宠物的健康建议")}
+
 
 # 启动服务器
 def run_server():
