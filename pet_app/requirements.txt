@@ -11,3 +11,5 @@ pyinstaller==6.10.0
 requests==2.31.0
 bcrypt==3.2.0
 cryptography==42.0.5
+pymysql
+python-multipart
